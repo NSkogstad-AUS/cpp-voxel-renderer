@@ -19,10 +19,11 @@
 #include <algorithm>
 
 // Chunk/world configuration
-constexpr int CHUNK_SIZE = 16;
-constexpr int CHUNK_HEIGHT = 64;
-constexpr int VIEW_DISTANCE = 2; // chunks in each axis around the camera
-constexpr int WATER_LEVEL = 18;
+constexpr int CHUNK_SIZE = 8;
+constexpr int CHUNK_HEIGHT = 32;
+constexpr int VIEW_DISTANCE =32; // chunks in each axis around the camera (keep small for perf)
+constexpr int WATER_LEVEL = 10;
+constexpr bool DRAW_WIREFRAME = true; // set true to show outlines (slow)
 
 enum class BlockType : uint8_t {
     Air = 0,
@@ -232,122 +233,29 @@ void Renderer::render() {
     GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
     GLint projectionLoc = glGetUniformLocation(shaderProgram, "projection");
     GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
-    GLint colorLoc = glGetUniformLocation(shaderProgram, "color");
     glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
+    glm::mat4 identityModel(1.0f);
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identityModel));
 
     // Render the cubes with backface culling
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // default to fill; wireframe is optional
 
-    glBindVertexArray(cubeVAO);
-
-    // Make sure chunks are generated before drawing
     for (const auto& chunk : visitedChunks) {
         generateChunk(chunk);
-    }
-
-    auto blockColor = [](BlockType type) -> glm::vec4 {
-        switch (type) {
-            case BlockType::Grass: return glm::vec4(0.2f, 0.7f, 0.2f, 1.0f);
-            case BlockType::Dirt:  return glm::vec4(0.45f, 0.27f, 0.12f, 1.0f);
-            case BlockType::Stone: return glm::vec4(0.55f, 0.55f, 0.55f, 1.0f);
-            case BlockType::Water: return glm::vec4(0.1f, 0.3f, 0.8f, 0.65f);
-            case BlockType::Air:
-            default:               return glm::vec4(0.0f);
-        }
-    };
-
-    auto blockIndex = [](int lx, int ly, int lz) {
-        return (ly * CHUNK_SIZE + lz) * CHUNK_SIZE + lx;
-    };
-
-    auto blockAt = [&](int worldX, int worldY, int worldZ) -> BlockType {
-        if (worldY < 0 || worldY >= CHUNK_HEIGHT) {
-            return BlockType::Air;
-        }
-        return static_cast<BlockType>(getBlockAt(worldX, worldY, worldZ));
-    };
-
-    auto drawFaceRange = [](int offset) {
-        glDrawArrays(GL_TRIANGLES, offset, 6);
-    };
-
-    for (const auto& chunk : visitedChunks) {
-        int chunkMinX = chunk.first * CHUNK_SIZE;
-        int chunkMinZ = chunk.second * CHUNK_SIZE;
-        auto chunkIt = chunkData.find(chunk);
-        if (chunkIt == chunkData.end()) {
+        buildChunkMesh(chunk);
+        auto meshIt = chunkMeshes.find(chunk);
+        if (meshIt == chunkMeshes.end() || meshIt->second.vertexCount == 0) {
             continue;
         }
-        const std::vector<uint8_t>& blocks = chunkIt->second;
-
-        for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
-            for (int ly = 0; ly < CHUNK_HEIGHT; ++ly) {
-                for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
-                    BlockType block = static_cast<BlockType>(blocks[blockIndex(lx, ly, lz)]);
-                    if (block == BlockType::Air) {
-                        continue;
-                    }
-
-                    int worldX = chunkMinX + lx;
-                    int worldZ = chunkMinZ + lz;
-
-                    bool drawFront = blockAt(worldX, ly, worldZ + 1) == BlockType::Air;
-                    bool drawBack = blockAt(worldX, ly, worldZ - 1) == BlockType::Air;
-                    bool drawLeft = blockAt(worldX - 1, ly, worldZ) == BlockType::Air;
-                    bool drawRight = blockAt(worldX + 1, ly, worldZ) == BlockType::Air;
-                    bool drawTop = blockAt(worldX, ly + 1, worldZ) == BlockType::Air;
-                    bool drawBottom = blockAt(worldX, ly - 1, worldZ) == BlockType::Air;
-
-                    if (!(drawFront || drawBack || drawLeft || drawRight || drawTop || drawBottom)) {
-                        continue;
-                    }
-
-                    glm::mat4 model = glm::mat4(1.0f);
-                    model = glm::translate(model, glm::vec3(worldX, ly, worldZ));
-                    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-
-                    // Solid color fill
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                    glm::vec4 color = blockColor(block);
-                    glUniform4f(colorLoc, color.r, color.g, color.b, color.a);
-
-                    if (drawFront) drawFaceRange(0);   // +Z
-                    if (drawBack) drawFaceRange(6);    // -Z
-                    if (drawLeft) drawFaceRange(12);   // -X
-                    if (drawRight) drawFaceRange(18);  // +X
-                    if (drawTop) drawFaceRange(24);    // +Y
-                    if (drawBottom) drawFaceRange(30); // -Y
-
-                    // Wireframe overlay for cube outlines
-                    glEnable(GL_POLYGON_OFFSET_LINE);
-                    glPolygonOffset(-1.0f, -1.0f); // pull lines toward camera to reduce z-fighting
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                    glUniform4f(colorLoc, 0.9f, 0.9f, 0.9f, 1.0f);
-
-                    if (drawFront) drawFaceRange(0);   // +Z
-                    if (drawBack) drawFaceRange(6);    // -Z
-                    if (drawLeft) drawFaceRange(12);   // -X
-                    if (drawRight) drawFaceRange(18);  // +X
-                    if (drawTop) drawFaceRange(24);    // +Y
-                    if (drawBottom) drawFaceRange(30); // -Y
-
-                    glDisable(GL_POLYGON_OFFSET_LINE);
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                }
-            }
-        }
+        glBindVertexArray(meshIt->second.vao);
+        glDrawArrays(GL_TRIANGLES, 0, meshIt->second.vertexCount);
     }
 
     glBindVertexArray(0);
-
-    // Debug: Check for OpenGL errors
-    GLenum err;
-    while ((err = glGetError()) != GL_NO_ERROR) {
-        std::cerr << "OpenGL error during rendering: " << err << std::endl;
-    }
 }
 
 void Renderer::generateChunk(const std::pair<int, int>& chunk) {
@@ -424,6 +332,145 @@ unsigned int Renderer::getBlockAt(int worldX, int worldY, int worldZ) {
     return it->second[idx];
 }
 
+void Renderer::buildChunkMesh(const std::pair<int, int>& chunk) {
+    // Skip if already built
+    if (chunkMeshes.find(chunk) != chunkMeshes.end()) {
+        return;
+    }
+
+    auto chunkIt = chunkData.find(chunk);
+    if (chunkIt == chunkData.end()) {
+        return;
+    }
+    const std::vector<uint8_t>& blocks = chunkIt->second;
+
+    auto blockIndex = [](int lx, int ly, int lz) {
+        return (ly * CHUNK_SIZE + lz) * CHUNK_SIZE + lx;
+    };
+
+    auto blockAt = [&](int worldX, int worldY, int worldZ) -> BlockType {
+        if (worldY < 0 || worldY >= CHUNK_HEIGHT) {
+            return BlockType::Air;
+        }
+        return static_cast<BlockType>(getBlockAt(worldX, worldY, worldZ));
+    };
+
+    auto blockColor = [](BlockType type) -> glm::vec4 {
+        switch (type) {
+            case BlockType::Grass: return glm::vec4(0.2f, 0.7f, 0.2f, 1.0f);
+            case BlockType::Dirt:  return glm::vec4(0.45f, 0.27f, 0.12f, 1.0f);
+            case BlockType::Stone: return glm::vec4(0.55f, 0.55f, 0.55f, 1.0f);
+            case BlockType::Water: return glm::vec4(0.1f, 0.3f, 0.8f, 0.65f);
+            case BlockType::Air:
+            default:               return glm::vec4(0.0f);
+        }
+    };
+
+    struct Vertex {
+        float x, y, z;
+        float r, g, b, a;
+    };
+
+    // Face vertex templates (6 faces, 6 vertices each) in local cube space centered at block position
+    static const float faceVertices[6][18] = {
+        { // +Z (front)
+            -0.5f, -0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,  -0.5f, -0.5f,  0.5f
+        },
+        { // -Z (back)
+            -0.5f, -0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,   0.5f,  0.5f, -0.5f,
+             0.5f,  0.5f, -0.5f,   0.5f, -0.5f, -0.5f,  -0.5f, -0.5f, -0.5f
+        },
+        { // -X (left)
+            -0.5f, -0.5f, -0.5f,  -0.5f, -0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,
+            -0.5f,  0.5f,  0.5f,  -0.5f,  0.5f, -0.5f,  -0.5f, -0.5f, -0.5f
+        },
+        { // +X (right)
+             0.5f, -0.5f, -0.5f,   0.5f,  0.5f, -0.5f,   0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f, -0.5f, -0.5f
+        },
+        { // +Y (top)
+            -0.5f,  0.5f, -0.5f,  -0.5f,  0.5f,  0.5f,   0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,   0.5f,  0.5f, -0.5f,  -0.5f,  0.5f, -0.5f
+        },
+        { // -Y (bottom)
+            -0.5f, -0.5f, -0.5f,   0.5f, -0.5f, -0.5f,   0.5f, -0.5f,  0.5f,
+             0.5f, -0.5f,  0.5f,  -0.5f, -0.5f,  0.5f,  -0.5f, -0.5f, -0.5f
+        }
+    };
+
+    const int chunkMinX = chunk.first * CHUNK_SIZE;
+    const int chunkMinZ = chunk.second * CHUNK_SIZE;
+
+    std::vector<Vertex> vertices;
+    vertices.reserve(20000); // heuristic to avoid reallocations
+
+    for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+        for (int ly = 0; ly < CHUNK_HEIGHT; ++ly) {
+            for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
+                BlockType block = static_cast<BlockType>(blocks[blockIndex(lx, ly, lz)]);
+                if (block == BlockType::Air) {
+                    continue;
+                }
+
+                const int worldX = chunkMinX + lx;
+                const int worldZ = chunkMinZ + lz;
+
+                bool drawFace[6] = {
+                    blockAt(worldX, ly, worldZ + 1) == BlockType::Air, // +Z
+                    blockAt(worldX, ly, worldZ - 1) == BlockType::Air, // -Z
+                    blockAt(worldX - 1, ly, worldZ) == BlockType::Air, // -X
+                    blockAt(worldX + 1, ly, worldZ) == BlockType::Air, // +X
+                    blockAt(worldX, ly + 1, worldZ) == BlockType::Air, // +Y
+                    blockAt(worldX, ly - 1, worldZ) == BlockType::Air  // -Y
+                };
+
+                if (!(drawFace[0] || drawFace[1] || drawFace[2] || drawFace[3] || drawFace[4] || drawFace[5])) {
+                    continue;
+                }
+
+                glm::vec4 color = blockColor(block);
+
+                for (int face = 0; face < 6; ++face) {
+                    if (!drawFace[face]) continue;
+                    const float* fv = faceVertices[face];
+                    for (int v = 0; v < 6; ++v) {
+                        Vertex vert;
+                        vert.x = fv[v * 3 + 0] + worldX;
+                        vert.y = fv[v * 3 + 1] + ly;
+                        vert.z = fv[v * 3 + 2] + worldZ;
+                        vert.r = color.r;
+                        vert.g = color.g;
+                        vert.b = color.b;
+                        vert.a = color.a;
+                        vertices.push_back(vert);
+                    }
+                }
+            }
+        }
+    }
+
+    ChunkMesh mesh;
+    mesh.vertexCount = static_cast<int>(vertices.size());
+    if (mesh.vertexCount > 0) {
+        glGenVertexArrays(1, &mesh.vao);
+        glGenBuffers(1, &mesh.vbo);
+        glBindVertexArray(mesh.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    chunkMeshes.emplace(chunk, mesh);
+}
+
 void Renderer::updateVisitedChunks(const std::pair<int, int>& chunk) {
     visitedChunks.clear();
     for (int dx = -VIEW_DISTANCE; dx <= VIEW_DISTANCE; ++dx) {
@@ -441,9 +488,14 @@ std::pair<int, int> Renderer::getCurrentChunk(float cameraX, float cameraZ) {
 
 void Renderer::cleanup() {
     // Good practice to clean up :)
+    glDeleteProgram(shaderProgram);
     glDeleteVertexArrays(1, &cubeVAO);
     glDeleteBuffers(1, &cubeVBO);
-    glDeleteProgram(shaderProgram);
+    for (auto& entry : chunkMeshes) {
+        if (entry.second.vao) glDeleteVertexArrays(1, &entry.second.vao);
+        if (entry.second.vbo) glDeleteBuffers(1, &entry.second.vbo);
+    }
+    chunkMeshes.clear();
 }
 
 unsigned int Renderer::loadShaders(const char* vertexPath, const char* fragmentPath) {
