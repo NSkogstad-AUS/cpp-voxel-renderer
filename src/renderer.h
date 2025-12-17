@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <glm/glm.hpp>
 
 struct ChunkMesh {
     unsigned int vao = 0;
@@ -25,10 +26,14 @@ private:
     void generateChunk(const std::pair<int, int>& chunk);
     void buildChunkMesh(const std::pair<int, int>& chunk);
     unsigned int getBlockAt(int worldX, int worldY, int worldZ, bool generateMissing = true);
+    void renderDepthPass(const glm::mat4& lightSpace);
 
     unsigned int cubeVBO = 0;
     unsigned int cubeVAO = 0;
     unsigned int shaderProgram = 0;
+    unsigned int depthShaderProgram = 0;
+    unsigned int depthMapFBO = 0;
+    unsigned int depthMap = 0;
     std::set<std::pair<int, int>> visitedChunks;
     std::map<std::pair<int, int>, std::vector<uint8_t>> chunkData;
     std::map<std::pair<int, int>, ChunkMesh> chunkMeshes;

@@ -24,6 +24,8 @@ constexpr int CHUNK_HEIGHT = 32;
 constexpr int VIEW_DISTANCE = 2;
 constexpr int WATER_LEVEL = 10;
 constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 10;
+constexpr bool DRAW_WIREFRAME = false;
+constexpr int SHADOW_MAP_SIZE = 2048;
 
 enum class BlockType : uint8_t {
     Air = 0,
@@ -169,10 +171,36 @@ void Renderer::initialise() {
 
     // Load and compile shaders
     shaderProgram = loadShaders("shaders/vertexShader.vert", "shaders/fragmentShader.frag");
+    depthShaderProgram = loadShaders("shaders/shadowDepth.vert", "shaders/shadowDepth.frag");
     if (shaderProgram == 0) {
         std::cerr << "Failed to load shaders." << std::endl;
         return;
     }
+    if (depthShaderProgram == 0) {
+        std::cerr << "Failed to load depth shaders." << std::endl;
+        return;
+    }
+
+    // Set up shadow map framebuffer
+    glGenFramebuffers(1, &depthMapFBO);
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "Depth framebuffer not complete!" << std::endl;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     // Enable depth testing
     glEnable(GL_DEPTH_TEST);
@@ -218,32 +246,20 @@ void Renderer::initialise() {
 
 void Renderer::render() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    // Using shader program
-    glUseProgram(shaderProgram);
 
-    // View matrix from the camera
+    // View/projection from camera
     glm::mat4 view = camera.GetViewMatrix();
-
-    // Projection matrix: perspective projection
-    // Increase far plane to cover the full terrain extents
     glm::mat4 project = glm::perspective(glm::radians(45.0f), (float)800 / (float)600, 0.1f, 2000.0f);
 
-    // Set the matrices in the shader
-    GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
-    GLint projectionLoc = glGetUniformLocation(shaderProgram, "projection");
-    GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
-    glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
-    glm::mat4 identityModel(1.0f);
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identityModel));
+    // Directional light setup
+    glm::vec3 lightDir = glm::normalize(glm::vec3(-0.5f, -1.2f, -0.3f));
+    float shadowRange = 80.0f;
+    glm::vec3 lightPos = camera.Position - lightDir * 50.0f;
+    glm::mat4 lightProj = glm::ortho(-shadowRange, shadowRange, -shadowRange, shadowRange, 1.0f, 200.0f);
+    glm::mat4 lightView = glm::lookAt(lightPos, camera.Position, glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::mat4 lightSpace = lightProj * lightView;
 
-    // Render the cubes with backface culling
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CCW);
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // default to fill; wireframe is optional
-
+    // Build/generate a limited number of missing chunks per frame
     int buildsThisFrame = 0;
     for (const auto& chunk : visitedChunks) {
         bool hasData = chunkData.find(chunk) != chunkData.end();
@@ -251,21 +267,48 @@ void Renderer::render() {
         bool needsBuild = !hasData || !hasMesh;
 
         if (needsBuild && buildsThisFrame >= MAX_CHUNK_BUILDS_PER_FRAME) {
-            continue;
+            continue; // defer generation/meshing to later frames
         }
 
         if (!hasData) {
             generateChunk(chunk);
-            hasData = true;
         }
         if (!hasMesh) {
             buildChunkMesh(chunk);
-            hasMesh = chunkMeshes.find(chunk) != chunkMeshes.end();
         }
         if (needsBuild) {
             buildsThisFrame++;
         }
+    }
 
+    // Depth pass
+    renderDepthPass(lightSpace);
+
+    // Main pass
+    glUseProgram(shaderProgram);
+    GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
+    GLint projectionLoc = glGetUniformLocation(shaderProgram, "projection");
+    GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+    GLint lightSpaceLoc = glGetUniformLocation(shaderProgram, "lightSpaceMatrix");
+    GLint lightDirLoc = glGetUniformLocation(shaderProgram, "lightDir");
+    GLint shadowMapLoc = glGetUniformLocation(shaderProgram, "shadowMap");
+    glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
+    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, glm::value_ptr(lightSpace));
+    glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDir));
+    glUniform1i(shadowMapLoc, 0);
+    glm::mat4 identityModel(1.0f);
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identityModel));
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    for (const auto& chunk : visitedChunks) {
         auto meshIt = chunkMeshes.find(chunk);
         if (meshIt == chunkMeshes.end() || meshIt->second.vertexCount == 0) {
             continue;
@@ -292,6 +335,37 @@ void Renderer::render() {
         }
         chunkData.erase(key);
     }
+}
+
+void Renderer::renderDepthPass(const glm::mat4& lightSpace) {
+    // Depth-only pass from light POV
+    glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glCullFace(GL_FRONT); // reduce peter-panning
+
+    glUseProgram(depthShaderProgram);
+    GLint lightSpaceLoc = glGetUniformLocation(depthShaderProgram, "lightSpaceMatrix");
+    GLint modelLoc = glGetUniformLocation(depthShaderProgram, "model");
+    glm::mat4 identityModel(1.0f);
+    glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, glm::value_ptr(lightSpace));
+    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identityModel));
+
+    for (const auto& chunk : visitedChunks) {
+        auto meshIt = chunkMeshes.find(chunk);
+        if (meshIt == chunkMeshes.end() || meshIt->second.vertexCount == 0) {
+            continue;
+        }
+        glBindVertexArray(meshIt->second.vao);
+        glDrawArrays(GL_TRIANGLES, 0, meshIt->second.vertexCount);
+    }
+
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glCullFace(GL_BACK);
+
+    // Restore viewport for main pass
+    glViewport(0, 0, 800, 600);
 }
 
 void Renderer::generateChunk(const std::pair<int, int>& chunk) {
@@ -408,6 +482,7 @@ void Renderer::buildChunkMesh(const std::pair<int, int>& chunk) {
     struct Vertex {
         float x, y, z;
         float r, g, b, a;
+        float nx, ny, nz;
     };
 
     // Face vertex templates (6 faces, 6 vertices each) in local cube space centered at block position
@@ -473,6 +548,13 @@ void Renderer::buildChunkMesh(const std::pair<int, int>& chunk) {
                 for (int face = 0; face < 6; ++face) {
                     if (!drawFace[face]) continue;
                     const float* fv = faceVertices[face];
+                    glm::vec3 normal = glm::vec3(0.0f);
+                    if (face == 0) normal = glm::vec3(0, 0, 1);
+                    else if (face == 1) normal = glm::vec3(0, 0, -1);
+                    else if (face == 2) normal = glm::vec3(-1, 0, 0);
+                    else if (face == 3) normal = glm::vec3(1, 0, 0);
+                    else if (face == 4) normal = glm::vec3(0, 1, 0);
+                    else if (face == 5) normal = glm::vec3(0, -1, 0);
                     for (int v = 0; v < 6; ++v) {
                         Vertex vert;
                         vert.x = fv[v * 3 + 0] + worldX;
@@ -482,6 +564,9 @@ void Renderer::buildChunkMesh(const std::pair<int, int>& chunk) {
                         vert.g = color.g;
                         vert.b = color.b;
                         vert.a = color.a;
+                        vert.nx = normal.x;
+                        vert.ny = normal.y;
+                        vert.nz = normal.z;
                         vertices.push_back(vert);
                     }
                 }
@@ -502,6 +587,8 @@ void Renderer::buildChunkMesh(const std::pair<int, int>& chunk) {
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
         glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(7 * sizeof(float)));
+        glEnableVertexAttribArray(2);
 
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -528,8 +615,11 @@ std::pair<int, int> Renderer::getCurrentChunk(float cameraX, float cameraZ) {
 void Renderer::cleanup() {
     // Good practice to clean up :)
     glDeleteProgram(shaderProgram);
+    glDeleteProgram(depthShaderProgram);
     glDeleteVertexArrays(1, &cubeVAO);
     glDeleteBuffers(1, &cubeVBO);
+    if (depthMap) glDeleteTextures(1, &depthMap);
+    if (depthMapFBO) glDeleteFramebuffers(1, &depthMapFBO);
     for (auto& entry : chunkMeshes) {
         if (entry.second.vao) glDeleteVertexArrays(1, &entry.second.vao);
         if (entry.second.vbo) glDeleteBuffers(1, &entry.second.vbo);
