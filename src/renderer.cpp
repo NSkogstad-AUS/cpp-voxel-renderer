@@ -25,7 +25,7 @@ constexpr int VIEW_DISTANCE = 2;
 constexpr int WATER_LEVEL = 10;
 constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 10;
 constexpr bool DRAW_WIREFRAME = false;
-constexpr int SHADOW_MAP_SIZE = 2048;
+constexpr int SHADOW_MAP_SIZE = 4096;
 
 enum class BlockType : uint8_t {
     Air = 0,
@@ -186,8 +186,8 @@ void Renderer::initialise() {
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -292,11 +292,13 @@ void Renderer::render() {
     GLint lightSpaceLoc = glGetUniformLocation(shaderProgram, "lightSpaceMatrix");
     GLint lightDirLoc = glGetUniformLocation(shaderProgram, "lightDir");
     GLint shadowMapLoc = glGetUniformLocation(shaderProgram, "shadowMap");
+    GLint shadowTexelSizeLoc = glGetUniformLocation(shaderProgram, "shadowTexelSize");
     glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
     glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, glm::value_ptr(lightSpace));
     glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDir));
     glUniform1i(shadowMapLoc, 0);
+    glUniform2f(shadowTexelSizeLoc, 1.0f / SHADOW_MAP_SIZE, 1.0f / SHADOW_MAP_SIZE);
     glm::mat4 identityModel(1.0f);
     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identityModel));
 
