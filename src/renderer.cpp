@@ -17,13 +17,14 @@
 #include <cmath>
 #include <map>
 #include <algorithm>
+#include <random>
 
 // Chunk/world configuration
-constexpr int CHUNK_SIZE = 8;
+constexpr int CHUNK_SIZE = 16;
 constexpr int CHUNK_HEIGHT = 32;
 constexpr int VIEW_DISTANCE = 16;
 constexpr int WATER_LEVEL = 10;
-constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 10;
+constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 16;
 constexpr bool DRAW_WIREFRAME = false;
 constexpr int SHADOW_MAP_SIZE = 4096;
 
@@ -124,11 +125,25 @@ float octavePerlin(float x, float y, float z, int octaves, float persistence) {
 
     return total / maxValue;
 }
+
+// Run-time seed to randomize terrain each launch
+float noiseOffsetX = 0.0f;
+float noiseOffsetZ = 0.0f;
+bool noiseSeeded = false;
 } // namespace
 
 extern Camera camera;
 
 void Renderer::initialise() {
+    if (!noiseSeeded) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<float> dist(-10000.0f, 10000.0f);
+        noiseOffsetX = dist(gen);
+        noiseOffsetZ = dist(gen);
+        noiseSeeded = true;
+    }
+
     // Define vertices for a 3D cube (counter-clockwise order)
     float vertices[] = {
         // Front (+Z)
@@ -201,6 +216,13 @@ void Renderer::initialise() {
         std::cerr << "Depth framebuffer not complete!" << std::endl;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    std::cout << "World settings -> CHUNK_SIZE: " << CHUNK_SIZE
+              << ", CHUNK_HEIGHT: " << CHUNK_HEIGHT
+              << ", VIEW_DISTANCE: " << VIEW_DISTANCE
+              << ", MAX_CHUNK_BUILDS_PER_FRAME: " << MAX_CHUNK_BUILDS_PER_FRAME
+              << ", noise offsets: (" << noiseOffsetX << ", " << noiseOffsetZ << ")"
+              << std::endl;
 
     // Enable depth testing
     glEnable(GL_DEPTH_TEST);
@@ -386,19 +408,34 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
     int chunkMinX = chunk.first * CHUNK_SIZE;
     int chunkMinZ = chunk.second * CHUNK_SIZE;
 
+    auto heightNoise = [&](float wx, float wz) {
+        float x = wx + noiseOffsetX;
+        float z = wz + noiseOffsetZ;
+        float continent = octavePerlin(x * 0.0025f, z * 0.0025f, 0.0f, 4, 0.52f);
+        float detail = octavePerlin(x * 0.0075f, z * 0.0075f, 0.0f, 3, 0.6f);
+        return continent * 0.8f + detail * 0.2f;
+    };
+
     for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
         int worldX = chunkMinX + lx;
         for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
             int worldZ = chunkMinZ + lz;
 
-            // Blend low-frequency and high-frequency noise for broad landmasses with detail
-            float continent = octavePerlin(worldX * 0.008f, worldZ * 0.008f, 0.0f, 3, 0.45f);
-            float detail = octavePerlin(worldX * 0.03f, worldZ * 0.03f, 0.0f, 4, 0.5f);
-            float heightValue = (continent * 0.6f + detail * 0.4f) * 0.5f + 0.5f; // normalize to [0,1]
+            // Smooth the noise field with a 5x5 average for seamless chunk edges
+            float sum = 0.0f;
+            int count = 0;
+            for (int dx = -2; dx <= 2; ++dx) {
+                for (int dz = -2; dz <= 2; ++dz) {
+                    sum += heightNoise(worldX + dx + 0.5f, worldZ + dz + 0.5f);
+                    count++;
+                }
+            }
+            float blended = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
+            float heightValue = pow(blended * 0.5f + 0.5f, 1.02f);
 
-            int baseHeight = static_cast<int>(CHUNK_HEIGHT * 0.25f);
-            int heightRange = static_cast<int>(CHUNK_HEIGHT * 0.35f);
-            int columnHeight = std::clamp(baseHeight + static_cast<int>(std::round(heightValue * heightRange)), 1, CHUNK_HEIGHT - 2);
+            int baseHeight = static_cast<int>(CHUNK_HEIGHT * 0.32f);
+            int heightRange = static_cast<int>(CHUNK_HEIGHT * 0.36f);
+            int columnHeight = std::clamp(baseHeight + static_cast<int>(std::round(heightValue * heightRange)), 2, CHUNK_HEIGHT - 2);
 
             for (int y = 0; y < columnHeight; ++y) {
                 BlockType type = BlockType::Stone;
