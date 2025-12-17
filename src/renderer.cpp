@@ -243,13 +243,31 @@ void Renderer::render() {
 
     glBindVertexArray(cubeVAO);
 
-    // Mark every voxel filled; swap this to real world data later
-    std::vector<uint8_t> occupancy(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE, 1);
-    auto isFilled = [&](int lx, int ly, int lz) -> bool {
-        if (lx < 0 || lx >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) {
-            return false; // outside the chunk is air
+    // Make sure chunks are generated before drawing
+    for (const auto& chunk : visitedChunks) {
+        generateChunk(chunk);
+    }
+
+    auto blockColor = [](BlockType type) -> glm::vec4 {
+        switch (type) {
+            case BlockType::Grass: return glm::vec4(0.2f, 0.7f, 0.2f, 1.0f);
+            case BlockType::Dirt:  return glm::vec4(0.45f, 0.27f, 0.12f, 1.0f);
+            case BlockType::Stone: return glm::vec4(0.55f, 0.55f, 0.55f, 1.0f);
+            case BlockType::Water: return glm::vec4(0.1f, 0.3f, 0.8f, 0.65f);
+            case BlockType::Air:
+            default:               return glm::vec4(0.0f);
         }
-        return occupancy[(ly * CHUNK_SIZE + lz) * CHUNK_SIZE + lx] != 0;
+    };
+
+    auto blockIndex = [](int lx, int ly, int lz) {
+        return (ly * CHUNK_SIZE + lz) * CHUNK_SIZE + lx;
+    };
+
+    auto blockAt = [&](int worldX, int worldY, int worldZ) -> BlockType {
+        if (worldY < 0 || worldY >= CHUNK_HEIGHT) {
+            return BlockType::Air;
+        }
+        return static_cast<BlockType>(getBlockAt(worldX, worldY, worldZ));
     };
 
     auto drawFaceRange = [](int offset) {
@@ -259,32 +277,42 @@ void Renderer::render() {
     for (const auto& chunk : visitedChunks) {
         int chunkMinX = chunk.first * CHUNK_SIZE;
         int chunkMinZ = chunk.second * CHUNK_SIZE;
+        auto chunkIt = chunkData.find(chunk);
+        if (chunkIt == chunkData.end()) {
+            continue;
+        }
+        const std::vector<uint8_t>& blocks = chunkIt->second;
 
         for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
-            for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+            for (int ly = 0; ly < CHUNK_HEIGHT; ++ly) {
                 for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
-                    if (!isFilled(lx, ly, lz)) {
+                    BlockType block = static_cast<BlockType>(blocks[blockIndex(lx, ly, lz)]);
+                    if (block == BlockType::Air) {
                         continue;
                     }
 
-                    bool drawFront = !isFilled(lx, ly, lz + 1);
-                    bool drawBack = !isFilled(lx, ly, lz - 1);
-                    bool drawLeft = !isFilled(lx - 1, ly, lz);
-                    bool drawRight = !isFilled(lx + 1, ly, lz);
-                    bool drawTop = !isFilled(lx, ly + 1, lz);
-                    bool drawBottom = !isFilled(lx, ly - 1, lz);
+                    int worldX = chunkMinX + lx;
+                    int worldZ = chunkMinZ + lz;
+
+                    bool drawFront = blockAt(worldX, ly, worldZ + 1) == BlockType::Air;
+                    bool drawBack = blockAt(worldX, ly, worldZ - 1) == BlockType::Air;
+                    bool drawLeft = blockAt(worldX - 1, ly, worldZ) == BlockType::Air;
+                    bool drawRight = blockAt(worldX + 1, ly, worldZ) == BlockType::Air;
+                    bool drawTop = blockAt(worldX, ly + 1, worldZ) == BlockType::Air;
+                    bool drawBottom = blockAt(worldX, ly - 1, worldZ) == BlockType::Air;
 
                     if (!(drawFront || drawBack || drawLeft || drawRight || drawTop || drawBottom)) {
                         continue;
                     }
 
                     glm::mat4 model = glm::mat4(1.0f);
-                    model = glm::translate(model, glm::vec3(chunkMinX + lx, ly, chunkMinZ + lz));
+                    model = glm::translate(model, glm::vec3(worldX, ly, worldZ));
                     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
                     // Solid color fill
                     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                    glUniform4f(colorLoc, 0.0f, 0.6f, 0.2f, 1.0f);
+                    glm::vec4 color = blockColor(block);
+                    glUniform4f(colorLoc, color.r, color.g, color.b, color.a);
 
                     if (drawFront) drawFaceRange(0);   // +Z
                     if (drawBack) drawFaceRange(6);    // -Z
