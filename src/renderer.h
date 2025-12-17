@@ -24,7 +24,7 @@ public:
 private:
     void generateChunk(const std::pair<int, int>& chunk);
     void buildChunkMesh(const std::pair<int, int>& chunk);
-    unsigned int getBlockAt(int worldX, int worldY, int worldZ);
+    unsigned int getBlockAt(int worldX, int worldY, int worldZ, bool generateMissing = true);
 
     unsigned int cubeVBO = 0;
     unsigned int cubeVAO = 0;

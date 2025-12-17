@@ -21,9 +21,9 @@
 // Chunk/world configuration
 constexpr int CHUNK_SIZE = 8;
 constexpr int CHUNK_HEIGHT = 32;
-constexpr int VIEW_DISTANCE =32; // chunks in each axis around the camera (keep small for perf)
+constexpr int VIEW_DISTANCE = 2;
 constexpr int WATER_LEVEL = 10;
-constexpr bool DRAW_WIREFRAME = true; // set true to show outlines (slow)
+constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 10;
 
 enum class BlockType : uint8_t {
     Air = 0,
@@ -244,9 +244,28 @@ void Renderer::render() {
     glFrontFace(GL_CCW);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // default to fill; wireframe is optional
 
+    int buildsThisFrame = 0;
     for (const auto& chunk : visitedChunks) {
-        generateChunk(chunk);
-        buildChunkMesh(chunk);
+        bool hasData = chunkData.find(chunk) != chunkData.end();
+        bool hasMesh = chunkMeshes.find(chunk) != chunkMeshes.end();
+        bool needsBuild = !hasData || !hasMesh;
+
+        if (needsBuild && buildsThisFrame >= MAX_CHUNK_BUILDS_PER_FRAME) {
+            continue;
+        }
+
+        if (!hasData) {
+            generateChunk(chunk);
+            hasData = true;
+        }
+        if (!hasMesh) {
+            buildChunkMesh(chunk);
+            hasMesh = chunkMeshes.find(chunk) != chunkMeshes.end();
+        }
+        if (needsBuild) {
+            buildsThisFrame++;
+        }
+
         auto meshIt = chunkMeshes.find(chunk);
         if (meshIt == chunkMeshes.end() || meshIt->second.vertexCount == 0) {
             continue;
@@ -256,6 +275,23 @@ void Renderer::render() {
     }
 
     glBindVertexArray(0);
+
+    // Clean up meshes and data no longer in view to keep memory/draw list small
+    std::vector<std::pair<int, int>> toRemove;
+    for (const auto& entry : chunkMeshes) {
+        if (visitedChunks.find(entry.first) == visitedChunks.end()) {
+            toRemove.push_back(entry.first);
+        }
+    }
+    for (const auto& key : toRemove) {
+        auto it = chunkMeshes.find(key);
+        if (it != chunkMeshes.end()) {
+            if (it->second.vao) glDeleteVertexArrays(1, &it->second.vao);
+            if (it->second.vbo) glDeleteBuffers(1, &it->second.vbo);
+            chunkMeshes.erase(it);
+        }
+        chunkData.erase(key);
+    }
 }
 
 void Renderer::generateChunk(const std::pair<int, int>& chunk) {
@@ -307,7 +343,7 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
     chunkData.emplace(chunk, std::move(blocks));
 }
 
-unsigned int Renderer::getBlockAt(int worldX, int worldY, int worldZ) {
+unsigned int Renderer::getBlockAt(int worldX, int worldY, int worldZ, bool generateMissing) {
     if (worldY < 0 || worldY >= CHUNK_HEIGHT) {
         return static_cast<unsigned int>(BlockType::Air);
     }
@@ -318,7 +354,9 @@ unsigned int Renderer::getBlockAt(int worldX, int worldY, int worldZ) {
     int localZ = worldZ - chunkZ * CHUNK_SIZE;
 
     std::pair<int, int> key(chunkX, chunkZ);
-    generateChunk(key);
+    if (generateMissing) {
+        generateChunk(key);
+    }
     auto it = chunkData.find(key);
     if (it == chunkData.end()) {
         return static_cast<unsigned int>(BlockType::Air);
@@ -352,7 +390,8 @@ void Renderer::buildChunkMesh(const std::pair<int, int>& chunk) {
         if (worldY < 0 || worldY >= CHUNK_HEIGHT) {
             return BlockType::Air;
         }
-        return static_cast<BlockType>(getBlockAt(worldX, worldY, worldZ));
+        // Allow pulling neighbor chunk data so we don't emit faces between solid neighboring chunks
+        return static_cast<BlockType>(getBlockAt(worldX, worldY, worldZ, true));
     };
 
     auto blockColor = [](BlockType type) -> glm::vec4 {
