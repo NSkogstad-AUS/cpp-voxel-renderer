@@ -128,6 +128,9 @@ int main(int argc, char** argv) {
     // Set initial camera position
     camera.Position = glm::vec3(0.0f, 10.0f, 20.0f); // Adjust as needed
 
+    // Seed the initial chunk visibility so cubes render immediately
+    renderer.updateVisitedChunks(renderer.getCurrentChunk(camera.Position.x, camera.Position.z));
+
     // Main rendering loop
     while (!glfwWindowShouldClose(window)) {
         // Calculate deltaTime
@@ -137,6 +140,9 @@ int main(int argc, char** argv) {
 
         // Process input for camera movement
         camera.ProcessKeyboard(window, deltaTime);
+
+        // Update visible chunks based on the camera position
+        renderer.updateVisitedChunks(renderer.getCurrentChunk(camera.Position.x, camera.Position.z));
 
         // Rendering scene
         renderer.render();

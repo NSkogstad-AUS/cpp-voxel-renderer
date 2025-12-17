@@ -13,36 +13,37 @@
 #include "camera.h"
 #include <set>
 #include <vector>
-#define CHUNK_SIZE 32 // Smaller chunk size to reduce the number of cubes
+#include <cstdint>
+#define CHUNK_SIZE 8 // Smaller chunk size to reduce the number of cubes
 
 extern Camera camera;
 
 void Renderer::initialise() {
     // Define vertices for a 3D cube (counter-clockwise order)
     float vertices[] = {
-        // Front face
-        -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f, -0.5f,  0.5f,
+        // Front (+Z)
+        -0.5f, -0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,  -0.5f, -0.5f,  0.5f,
 
-        // Back face
-        -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f,
-         0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f, -0.5f, -0.5f, -0.5f,
+        // Back (-Z)
+        -0.5f, -0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,   0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,   0.5f, -0.5f, -0.5f,  -0.5f, -0.5f, -0.5f,
 
-        // Left face
-        -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f, -0.5f, -0.5f,
-        -0.5f, -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
+        // Left (-X)
+        -0.5f, -0.5f, -0.5f,  -0.5f, -0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,  -0.5f,  0.5f, -0.5f,  -0.5f, -0.5f, -0.5f,
 
-        // Right face
-         0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,
+        // Right (+X)
+         0.5f, -0.5f, -0.5f,   0.5f,  0.5f, -0.5f,   0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f, -0.5f, -0.5f,
 
-        // Top face
-        -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f,
+        // Top (+Y)
+        -0.5f,  0.5f, -0.5f,  -0.5f,  0.5f,  0.5f,   0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,   0.5f,  0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,
 
-        // Bottom face (updated to counter-clockwise order)
-        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,
-         0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f, -0.5f
+        // Bottom (-Y)
+        -0.5f, -0.5f, -0.5f,   0.5f, -0.5f, -0.5f,   0.5f, -0.5f,  0.5f,
+         0.5f, -0.5f,  0.5f,  -0.5f, -0.5f,  0.5f,  -0.5f, -0.5f, -0.5f
     };
 
     // Generate and bind Vertex Array Object (VAO) for the cube
@@ -119,43 +120,82 @@ void Renderer::render() {
     // Set the matrices in the shader
     GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
     GLint projectionLoc = glGetUniformLocation(shaderProgram, "projection");
+    GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+    GLint colorLoc = glGetUniformLocation(shaderProgram, "color");
     glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
 
-    // Render the cubes
+    // Render the cubes with backface culling
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
     glBindVertexArray(cubeVAO);
-    GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
-    GLint colorLoc = glGetUniformLocation(shaderProgram, "color");
+
+    // Mark every voxel filled; swap this to real world data later
+    std::vector<uint8_t> occupancy(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE, 1);
+    auto isFilled = [&](int lx, int ly, int lz) -> bool {
+        if (lx < 0 || lx >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) {
+            return false; // outside the chunk is air
+        }
+        return occupancy[(ly * CHUNK_SIZE + lz) * CHUNK_SIZE + lx] != 0;
+    };
+
+    auto drawFaceRange = [](int offset) {
+        glDrawArrays(GL_TRIANGLES, offset, 6);
+    };
 
     for (const auto& chunk : visitedChunks) {
-        // Set a unique color for each chunk based on its coordinates
-        float outlineColorR = (chunk.first % 2 == 0) ? 1.0f : 0.0f;
-        float outlineColorG = (chunk.second % 2 == 0) ? 1.0f : 0.0f;
-        float outlineColorB = ((chunk.first + chunk.second) % 2 == 0) ? 1.0f : 0.0f;
+        int chunkMinX = chunk.first * CHUNK_SIZE;
+        int chunkMinZ = chunk.second * CHUNK_SIZE;
 
-        for (int x = chunk.first * CHUNK_SIZE; x < (chunk.first + 1) * CHUNK_SIZE; ++x) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) { // Loop over y-axis
-                for (int z = chunk.second * CHUNK_SIZE; z < (chunk.second + 1) * CHUNK_SIZE; ++z) {
+        for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
+            for (int ly = 0; ly < CHUNK_SIZE; ++ly) {
+                for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
+                    if (!isFilled(lx, ly, lz)) {
+                        continue;
+                    }
+
+                    bool drawFront = !isFilled(lx, ly, lz + 1);
+                    bool drawBack = !isFilled(lx, ly, lz - 1);
+                    bool drawLeft = !isFilled(lx - 1, ly, lz);
+                    bool drawRight = !isFilled(lx + 1, ly, lz);
+                    bool drawTop = !isFilled(lx, ly + 1, lz);
+                    bool drawBottom = !isFilled(lx, ly - 1, lz);
+
+                    if (!(drawFront || drawBack || drawLeft || drawRight || drawTop || drawBottom)) {
+                        continue;
+                    }
+
                     glm::mat4 model = glm::mat4(1.0f);
-                    model = glm::translate(model, glm::vec3(x, y, z)); // Include y and z positions
-
+                    model = glm::translate(model, glm::vec3(chunkMinX + lx, ly, chunkMinZ + lz));
                     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-                    // Drawing the cube faces
+                    // Solid color fill
                     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                    glUniform4f(colorLoc, 0.0f, 0.5f, 0.2f, 1.0f);
-                    glDrawArrays(GL_TRIANGLES, 0, 36);
+                    glUniform4f(colorLoc, 0.0f, 0.6f, 0.2f, 1.0f);
 
-                    // Drawing the wireframe edges with unique color
+                    if (drawFront) drawFaceRange(0);   // +Z
+                    if (drawBack) drawFaceRange(6);    // -Z
+                    if (drawLeft) drawFaceRange(12);   // -X
+                    if (drawRight) drawFaceRange(18);  // +X
+                    if (drawTop) drawFaceRange(24);    // +Y
+                    if (drawBottom) drawFaceRange(30); // -Y
+
+                    // Wireframe overlay for cube outlines
+                    glEnable(GL_POLYGON_OFFSET_LINE);
+                    glPolygonOffset(-1.0f, -1.0f); // pull lines toward camera to reduce z-fighting
                     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                    glUniform4f(colorLoc, outlineColorR, outlineColorG, outlineColorB, 1.0f);
-                    glDrawArrays(GL_TRIANGLES, 0, 36);
+                    glUniform4f(colorLoc, 0.9f, 0.9f, 0.9f, 1.0f);
 
-                    // Resetting the polygon mode
+                    if (drawFront) drawFaceRange(0);   // +Z
+                    if (drawBack) drawFaceRange(6);    // -Z
+                    if (drawLeft) drawFaceRange(12);   // -X
+                    if (drawRight) drawFaceRange(18);  // +X
+                    if (drawTop) drawFaceRange(24);    // +Y
+                    if (drawBottom) drawFaceRange(30); // -Y
+
+                    glDisable(GL_POLYGON_OFFSET_LINE);
                     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
                 }
             }

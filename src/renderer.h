@@ -15,7 +15,8 @@ public:
     unsigned int loadShaders(const char* vertexPath, const char* fragmentPath);
 
 private:
-    unsigned int cubeVBO, cubeVAO, terrainVBO, terrainVAO, shaderProgram;
-    std::vector<float> terrainVertices; // Add this line
+    unsigned int cubeVBO = 0;
+    unsigned int cubeVAO = 0;
+    unsigned int shaderProgram = 0;
     std::set<std::pair<int, int>> visitedChunks;
 };
