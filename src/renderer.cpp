@@ -13,10 +13,7 @@
 #include "camera.h"
 #include <set>
 #include <vector>
-#define CHUNK_SIZE 16 // Define the chunk size
-
-// vertex buffer object
-unsigned int cubeVBO, cubeVAO, terrainVBO, terrainVAO, shaderProgram;
+#define CHUNK_SIZE 32 // Smaller chunk size to reduce the number of cubes
 
 extern Camera camera;
 
@@ -104,33 +101,6 @@ void Renderer::initialise() {
     // Unbind the VBO and VAO for the cube to prevent accidental modifications
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
-
-    // Load height map
-    int width, height;
-    std::vector<float> heightMap = loadHeightMap("/Users/nicolaiskogstad/[ CUSTOM PROJECTS ]/3DProjection/pics/Tangram Heightmapper (1).png", width, height);
-    if (heightMap.empty()) {
-        return;
-    }
-
-    // Generate terrain vertices
-    terrainVertices = generateTerrainVertices(heightMap, width, height);
-
-    // Generate and bind Vertex Array Object (VAO) for the terrain
-    glGenVertexArrays(1, &terrainVAO);
-    glBindVertexArray(terrainVAO);
-
-    // Generate and bind the Vertex Buffer Object (VBO) for the terrain
-    glGenBuffers(1, &terrainVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, terrainVBO);
-    glBufferData(GL_ARRAY_BUFFER, terrainVertices.size() * sizeof(float), terrainVertices.data(), GL_STATIC_DRAW);
-
-    // Define vertex attribute pointer for the terrain
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // Unbind the VBO and VAO for the terrain to prevent accidental modifications
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
 }
 
 void Renderer::render() {
@@ -143,7 +113,8 @@ void Renderer::render() {
     glm::mat4 view = camera.GetViewMatrix();
 
     // Projection matrix: perspective projection
-    glm::mat4 project = glm::perspective(glm::radians(45.0f), (float)800 / (float)600, 0.1f, 100.0f);
+    // Increase far plane to cover the full terrain extents
+    glm::mat4 project = glm::perspective(glm::radians(45.0f), (float)800 / (float)600, 0.1f, 2000.0f);
 
     // Set the matrices in the shader
     GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
@@ -152,6 +123,10 @@ void Renderer::render() {
     glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
 
     // Render the cubes
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+
     glBindVertexArray(cubeVAO);
     GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
     GLint colorLoc = glGetUniformLocation(shaderProgram, "color");
@@ -187,12 +162,6 @@ void Renderer::render() {
         }
     }
 
-    // Render the terrain
-    glBindVertexArray(terrainVAO);
-    glm::mat4 model = glm::mat4(1.0f);
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-    glDrawArrays(GL_TRIANGLES, 0, terrainVertices.size() / 3);
-
     glBindVertexArray(0);
 
     // Debug: Check for OpenGL errors
@@ -204,11 +173,7 @@ void Renderer::render() {
 
 void Renderer::updateVisitedChunks(const std::pair<int, int>& chunk) {
     visitedChunks.clear();
-    for (int dx = -1; dx <= 1; ++dx) {
-        for (int dz = -1; dz <= 1; ++dz) {
-            visitedChunks.insert(std::make_pair(chunk.first + dx, chunk.second + dz));
-        }
-    }
+    visitedChunks.insert(chunk); // Only render the current chunk to keep count low
 }
 
 std::pair<int, int> Renderer::getCurrentChunk(float cameraX, float cameraZ) {
@@ -221,8 +186,6 @@ void Renderer::cleanup() {
     // Good practice to clean up :)
     glDeleteVertexArrays(1, &cubeVAO);
     glDeleteBuffers(1, &cubeVBO);
-    glDeleteVertexArrays(1, &terrainVAO);
-    glDeleteBuffers(1, &terrainVBO);
     glDeleteProgram(shaderProgram);
 }
 
