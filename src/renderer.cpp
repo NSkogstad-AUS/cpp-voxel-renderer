@@ -14,7 +14,18 @@
 #include <set>
 #include <vector>
 #include <cstdint>
-#define CHUNK_SIZE 8 // Smaller chunk size to reduce the number of cubes
+#include <cmath>
+#include <map>
+
+// Chunk/world configuration
+constexpr int CHUNK_SIZE = 16;
+constexpr int CHUNK_HEIGHT = 64;
+constexpr int VIEW_DISTANCE = 2; // chunks in each axis around the camera
+
+enum class BlockType : uint8_t {
+    Air = 0,
+    Solid
+};
 
 extern Camera camera;
 
@@ -74,6 +85,10 @@ void Renderer::initialise() {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
+
+    // Enable blending so translucent blocks can render (e.g. water later)
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // Verify that depth testing and face culling are enabled
     GLint depthTestEnabled, cullFaceEnabled;
@@ -211,9 +226,47 @@ void Renderer::render() {
     }
 }
 
+void Renderer::generateChunk(const std::pair<int, int>& chunk) {
+    if (chunkData.find(chunk) != chunkData.end()) {
+        return;
+    }
+
+    std::vector<uint8_t> blocks(CHUNK_SIZE * CHUNK_HEIGHT * CHUNK_SIZE, static_cast<uint8_t>(BlockType::Air));
+    chunkData.emplace(chunk, std::move(blocks));
+}
+
+unsigned int Renderer::getBlockAt(int worldX, int worldY, int worldZ) {
+    if (worldY < 0 || worldY >= CHUNK_HEIGHT) {
+        return static_cast<unsigned int>(BlockType::Air);
+    }
+
+    int chunkX = static_cast<int>(std::floor(static_cast<float>(worldX) / CHUNK_SIZE));
+    int chunkZ = static_cast<int>(std::floor(static_cast<float>(worldZ) / CHUNK_SIZE));
+    int localX = worldX - chunkX * CHUNK_SIZE;
+    int localZ = worldZ - chunkZ * CHUNK_SIZE;
+
+    std::pair<int, int> key(chunkX, chunkZ);
+    generateChunk(key);
+    auto it = chunkData.find(key);
+    if (it == chunkData.end()) {
+        return static_cast<unsigned int>(BlockType::Air);
+    }
+
+    int idx = (worldY * CHUNK_SIZE + localZ) * CHUNK_SIZE + localX;
+    if (idx < 0 || idx >= static_cast<int>(it->second.size())) {
+        return static_cast<unsigned int>(BlockType::Air);
+    }
+
+    return it->second[idx];
+}
+
 void Renderer::updateVisitedChunks(const std::pair<int, int>& chunk) {
     visitedChunks.clear();
-    visitedChunks.insert(chunk); // Only render the current chunk to keep count low
+    for (int dx = -VIEW_DISTANCE; dx <= VIEW_DISTANCE; ++dx) {
+        for (int dz = -VIEW_DISTANCE; dz <= VIEW_DISTANCE; ++dz) {
+            visitedChunks.insert(std::make_pair(chunk.first + dx, chunk.second + dz));
+        }
+    }
 }
 
 std::pair<int, int> Renderer::getCurrentChunk(float cameraX, float cameraZ) {

@@ -2,6 +2,7 @@
 #include <set>
 #include <vector>
 #include <string>
+#include <map>
 
 class Renderer {
 public:
@@ -15,8 +16,12 @@ public:
     unsigned int loadShaders(const char* vertexPath, const char* fragmentPath);
 
 private:
+    void generateChunk(const std::pair<int, int>& chunk);
+    unsigned int getBlockAt(int worldX, int worldY, int worldZ);
+
     unsigned int cubeVBO = 0;
     unsigned int cubeVAO = 0;
     unsigned int shaderProgram = 0;
     std::set<std::pair<int, int>> visitedChunks;
+    std::map<std::pair<int, int>, std::vector<uint8_t>> chunkData;
 };
