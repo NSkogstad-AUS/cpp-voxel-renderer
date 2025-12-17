@@ -21,7 +21,7 @@
 // Chunk/world configuration
 constexpr int CHUNK_SIZE = 8;
 constexpr int CHUNK_HEIGHT = 32;
-constexpr int VIEW_DISTANCE = 2;
+constexpr int VIEW_DISTANCE = 16;
 constexpr int WATER_LEVEL = 10;
 constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 10;
 constexpr bool DRAW_WIREFRAME = false;
@@ -344,7 +344,9 @@ void Renderer::renderDepthPass(const glm::mat4& lightSpace) {
     glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
-    glCullFace(GL_FRONT); // reduce peter-panning
+    glCullFace(GL_BACK);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 4.0f); // push depth slightly to reduce gaps
 
     glUseProgram(depthShaderProgram);
     GLint lightSpaceLoc = glGetUniformLocation(depthShaderProgram, "lightSpaceMatrix");
@@ -364,6 +366,7 @@ void Renderer::renderDepthPass(const glm::mat4& lightSpace) {
 
     glBindVertexArray(0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glCullFace(GL_BACK);
 
     // Restore viewport for main pass

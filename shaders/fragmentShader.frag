@@ -22,8 +22,8 @@ void main() {
 
     float shadow = 0.0;
     if (projCoords.z <= 1.0 && projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0) {
-        // Smaller, normal-based bias to reduce light leaks/gaps
-        float bias = max(0.0005, 0.0025 * (1.0 - diff));
+        // Slightly looser bias to fight peter-panning while keeping edges tight
+        float bias = max(0.0010, 0.0035 * (1.0 - diff));
         float currentDepth = projCoords.z - bias;
         float shadowSum = 0.0;
         int samples = 0;
