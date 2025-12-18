@@ -8,6 +8,8 @@ in vec3 vWorldPos;
 out vec4 FragColor;
 
 uniform vec3 lightDir;
+uniform vec3 lightColor;
+uniform vec3 ambientColor;
 uniform sampler2D shadowMap;
 uniform vec2 shadowTexelSize;
 
@@ -39,8 +41,8 @@ void main() {
         shadow = shadowSum / float(samples);
     }
 
-    float ambient = 0.25;
-    float lighting = ambient + (1.0 - shadow) * diff;
-    vec3 color = vColor.rgb * lighting;
+    vec3 ambient = ambientColor;
+    vec3 diffuse = (1.0 - shadow) * diff * lightColor;
+    vec3 color = vColor.rgb * (ambient + diffuse);
     FragColor = vec4(color, vColor.a);
 }

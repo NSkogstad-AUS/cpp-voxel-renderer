@@ -350,12 +350,18 @@ void Renderer::render() {
     GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
     GLint lightSpaceLoc = glGetUniformLocation(shaderProgram, "lightSpaceMatrix");
     GLint lightDirLoc = glGetUniformLocation(shaderProgram, "lightDir");
+    GLint lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
+    GLint ambientColorLoc = glGetUniformLocation(shaderProgram, "ambientColor");
     GLint shadowMapLoc = glGetUniformLocation(shaderProgram, "shadowMap");
     GLint shadowTexelSizeLoc = glGetUniformLocation(shaderProgram, "shadowTexelSize");
     glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(project));
     glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, glm::value_ptr(lightSpace));
     glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDir));
+    glm::vec3 lightColor(1.0f, 0.95f, 0.9f);
+    glm::vec3 ambientColor(0.2f, 0.2f, 0.22f);
+    glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightColor));
+    glUniform3fv(ambientColorLoc, 1, glm::value_ptr(ambientColor));
     glUniform1i(shadowMapLoc, 0);
     glUniform2f(shadowTexelSizeLoc, 1.0f / SHADOW_MAP_SIZE, 1.0f / SHADOW_MAP_SIZE);
     glm::mat4 identityModel(1.0f);

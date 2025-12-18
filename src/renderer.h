@@ -13,7 +13,7 @@ struct ChunkMesh {
 
 struct TerrainSettings {
     // Noise frequency for the large-scale landmasses (lower -> wider features)
-    float continentFreq = 0.0018f;
+    float continentFreq = 0.0135f;
     // Noise frequency for finer surface detail (higher -> more local variation)
     float detailFreq = 0.0060f;
     // Blend weights between the low-frequency and high-frequency noise
