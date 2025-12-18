@@ -20,11 +20,11 @@
 #include <random>
 
 // Chunk/world configuration
-constexpr int CHUNK_SIZE = 16;
+constexpr int CHUNK_SIZE = 4;
 constexpr int CHUNK_HEIGHT = 32;
-constexpr int VIEW_DISTANCE = 16;
+constexpr int VIEW_DISTANCE = 32;
 constexpr int WATER_LEVEL = 10;
-constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 16;
+constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 32;
 constexpr bool DRAW_WIREFRAME = false;
 constexpr int SHADOW_MAP_SIZE = 4096;
 
@@ -140,6 +140,30 @@ void Renderer::setTerrainSettings(const TerrainSettings& settings) {
 
 TerrainSettings Renderer::getTerrainSettings() {
     return terrainSettings;
+}
+
+void Renderer::setViewportSize(int width, int height) {
+    viewportWidth = std::max(1, width);
+    viewportHeight = std::max(1, height);
+}
+
+void Renderer::clearChunksAndMeshes() {
+    for (auto& entry : chunkMeshes) {
+        if (entry.second.vao) glDeleteVertexArrays(1, &entry.second.vao);
+        if (entry.second.vbo) glDeleteBuffers(1, &entry.second.vbo);
+    }
+    chunkMeshes.clear();
+    chunkData.clear();
+    visitedChunks.clear();
+}
+
+void Renderer::reseedNoise() {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dist(-10000.0f, 10000.0f);
+    noiseOffsetX = dist(gen);
+    noiseOffsetZ = dist(gen);
+    clearChunksAndMeshes();
 }
 
 extern Camera camera;
@@ -279,9 +303,12 @@ void Renderer::initialise() {
 void Renderer::render() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // Update viewport in case the window was resized
+    glViewport(0, 0, viewportWidth, viewportHeight);
+
     // View/projection from camera
     glm::mat4 view = camera.GetViewMatrix();
-    glm::mat4 project = glm::perspective(glm::radians(45.0f), (float)800 / (float)600, 0.1f, 2000.0f);
+    glm::mat4 project = glm::perspective(glm::radians(45.0f), static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight), 0.1f, 2000.0f);
 
     // Directional light setup
     glm::vec3 lightDir = glm::normalize(glm::vec3(-0.5f, -1.2f, -0.3f));
@@ -402,7 +429,7 @@ void Renderer::renderDepthPass(const glm::mat4& lightSpace) {
     glCullFace(GL_BACK);
 
     // Restore viewport for main pass
-    glViewport(0, 0, 800, 600);
+    glViewport(0, 0, viewportWidth, viewportHeight);
 }
 
 void Renderer::generateChunk(const std::pair<int, int>& chunk) {
@@ -426,12 +453,13 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
         return continent * terrainSettings.continentWeight + detail * terrainSettings.detailWeight;
     };
 
+    std::vector<int> heights(CHUNK_SIZE * CHUNK_SIZE, 0);
+
     for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
         int worldX = chunkMinX + lx;
         for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
             int worldZ = chunkMinZ + lz;
 
-            // Smooth the noise field with a small weighted kernel for seamless chunk edges
             float hCenter = heightNoise(worldX + 0.5f, worldZ + 0.5f);
             float hN = heightNoise(worldX + 0.5f, worldZ - 0.8f);
             float hS = heightNoise(worldX + 0.5f, worldZ + 1.8f);
@@ -455,6 +483,18 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
             int heightRange = static_cast<int>(CHUNK_HEIGHT * terrainSettings.heightRangeFraction);
             int columnHeight = std::clamp(baseHeight + static_cast<int>(std::round(heightValue * heightRange)), 2, CHUNK_HEIGHT - 2);
 
+            // Clamp slope against immediate neighbors to keep chunk borders aligned
+            if (lx > 0) {
+                int west = heights[lz * CHUNK_SIZE + (lx - 1)];
+                columnHeight = std::clamp(columnHeight, west - 2, west + 2);
+            }
+            if (lz > 0) {
+                int north = heights[(lz - 1) * CHUNK_SIZE + lx];
+                columnHeight = std::clamp(columnHeight, north - 2, north + 2);
+            }
+
+            heights[lz * CHUNK_SIZE + lx] = columnHeight;
+
             for (int y = 0; y < columnHeight; ++y) {
                 BlockType type = BlockType::Stone;
                 if (y >= columnHeight - 1) {
@@ -465,7 +505,6 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
                 blocks[blockIndex(lx, y, lz)] = static_cast<uint8_t>(type);
             }
 
-            // Fill water up to a consistent level for oceans and lakes
             if (columnHeight < WATER_LEVEL) {
                 for (int y = columnHeight; y <= WATER_LEVEL && y < CHUNK_HEIGHT; ++y) {
                     blocks[blockIndex(lx, y, lz)] = static_cast<uint8_t>(BlockType::Water);

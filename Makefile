@@ -1,10 +1,12 @@
 APP_NAME = app
 BUILD_DIR = ./run
-CPP_FILES = ./src/main.cpp ./src/renderer.cpp
+CPP_FILES = ./src/main.cpp ./src/renderer.cpp \
+            ./imgui/imgui.cpp ./imgui/imgui_draw.cpp ./imgui/imgui_tables.cpp ./imgui/imgui_widgets.cpp \
+            ./imgui/backends/imgui_impl_glfw.cpp ./imgui/backends/imgui_impl_opengl3.cpp
 
 # Compiler and flags
 CXX = clang++
-CXXFLAGS = -Wall -std=c++17 -DGL_SILENCE_DEPRECATION
+CXXFLAGS = -Wall -std=c++17 -DGL_SILENCE_DEPRECATION -DIMGUI_IMPL_OPENGL_LOADER_GLEW
 
 # Get the installation paths using Homebrew
 GLFW_PATH = $(shell brew --prefix glfw)
@@ -13,7 +15,8 @@ GLM_PATH = $(shell brew --prefix glm)
 GLUT_PATH = $(shell brew --prefix freeglut)
 
 # Include directories
-APP_INCLUDES = -I$(GLFW_PATH)/include -I$(GLEW_PATH)/include -I$(GLM_PATH)/include -I$(GLUT_PATH)/include
+APP_INCLUDES = -I$(GLFW_PATH)/include -I$(GLEW_PATH)/include -I$(GLM_PATH)/include -I$(GLUT_PATH)/include \
+               -I./imgui -I./imgui/backends
 
 # Linker flags and libraries
 APP_LINKERS = -L$(GLFW_PATH)/lib \

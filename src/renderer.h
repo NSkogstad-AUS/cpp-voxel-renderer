@@ -37,11 +37,14 @@ public:
     void cleanup();
     std::vector<float> loadHeightMap(const std::string& filePath, int& width, int& height);
     std::vector<float> generateTerrainVertices(const std::vector<float>& heightMap, int width, int height);
+    void setViewportSize(int width, int height);
     void updateVisitedChunks(const std::pair<int, int>& chunk);
     std::pair<int, int> getCurrentChunk(float cameraX, float cameraZ);
     unsigned int loadShaders(const char* vertexPath, const char* fragmentPath);
     static void setTerrainSettings(const TerrainSettings& settings);
     static TerrainSettings getTerrainSettings();
+    void clearChunksAndMeshes();
+    void reseedNoise();
 
 private:
     void generateChunk(const std::pair<int, int>& chunk);
@@ -55,6 +58,8 @@ private:
     unsigned int depthShaderProgram = 0;
     unsigned int depthMapFBO = 0;
     unsigned int depthMap = 0;
+    int viewportWidth = 800;
+    int viewportHeight = 600;
     std::set<std::pair<int, int>> visitedChunks;
     std::map<std::pair<int, int>, std::vector<uint8_t>> chunkData;
     std::map<std::pair<int, int>, ChunkMesh> chunkMeshes;
