@@ -28,6 +28,8 @@ constexpr int MAX_CHUNK_BUILDS_PER_FRAME = 16;
 constexpr bool DRAW_WIREFRAME = false;
 constexpr int SHADOW_MAP_SIZE = 4096;
 
+TerrainSettings Renderer::terrainSettings = TerrainSettings{};
+
 enum class BlockType : uint8_t {
     Air = 0,
     Grass,
@@ -131,6 +133,14 @@ float noiseOffsetX = 0.0f;
 float noiseOffsetZ = 0.0f;
 bool noiseSeeded = false;
 } // namespace
+
+void Renderer::setTerrainSettings(const TerrainSettings& settings) {
+    terrainSettings = settings;
+}
+
+TerrainSettings Renderer::getTerrainSettings() {
+    return terrainSettings;
+}
 
 extern Camera camera;
 
@@ -411,9 +421,9 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
     auto heightNoise = [&](float wx, float wz) {
         float x = wx + noiseOffsetX;
         float z = wz + noiseOffsetZ;
-        float continent = octavePerlin(x * 0.0025f, z * 0.0025f, 0.0f, 4, 0.52f);
-        float detail = octavePerlin(x * 0.0075f, z * 0.0075f, 0.0f, 3, 0.6f);
-        return continent * 0.8f + detail * 0.2f;
+        float continent = octavePerlin(x * terrainSettings.continentFreq, z * terrainSettings.continentFreq, 0.0f, 4, 0.5f);
+        float detail = octavePerlin(x * terrainSettings.detailFreq, z * terrainSettings.detailFreq, 0.0f, 3, 0.6f);
+        return continent * terrainSettings.continentWeight + detail * terrainSettings.detailWeight;
     };
 
     for (int lx = 0; lx < CHUNK_SIZE; ++lx) {
@@ -421,20 +431,28 @@ void Renderer::generateChunk(const std::pair<int, int>& chunk) {
         for (int lz = 0; lz < CHUNK_SIZE; ++lz) {
             int worldZ = chunkMinZ + lz;
 
-            // Smooth the noise field with a 5x5 average for seamless chunk edges
-            float sum = 0.0f;
-            int count = 0;
-            for (int dx = -2; dx <= 2; ++dx) {
-                for (int dz = -2; dz <= 2; ++dz) {
-                    sum += heightNoise(worldX + dx + 0.5f, worldZ + dz + 0.5f);
-                    count++;
-                }
-            }
-            float blended = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
-            float heightValue = pow(blended * 0.5f + 0.5f, 1.02f);
+            // Smooth the noise field with a small weighted kernel for seamless chunk edges
+            float hCenter = heightNoise(worldX + 0.5f, worldZ + 0.5f);
+            float hN = heightNoise(worldX + 0.5f, worldZ - 0.8f);
+            float hS = heightNoise(worldX + 0.5f, worldZ + 1.8f);
+            float hE = heightNoise(worldX + 1.8f, worldZ + 0.5f);
+            float hW = heightNoise(worldX - 0.8f, worldZ + 0.5f);
+            float hNE = heightNoise(worldX + 1.8f, worldZ - 0.8f);
+            float hNW = heightNoise(worldX - 0.8f, worldZ - 0.8f);
+            float hSE = heightNoise(worldX + 1.8f, worldZ + 1.8f);
+            float hSW = heightNoise(worldX - 0.8f, worldZ + 1.8f);
 
-            int baseHeight = static_cast<int>(CHUNK_HEIGHT * 0.32f);
-            int heightRange = static_cast<int>(CHUNK_HEIGHT * 0.36f);
+            float sum = hCenter * terrainSettings.smoothingCenterWeight
+                      + (hN + hS + hE + hW) * terrainSettings.smoothingEdgeWeight
+                      + (hNE + hNW + hSE + hSW) * terrainSettings.smoothingDiagWeight;
+            float weight = terrainSettings.smoothingCenterWeight
+                         + 4.0f * terrainSettings.smoothingEdgeWeight
+                         + 4.0f * terrainSettings.smoothingDiagWeight;
+            float blended = sum / weight;
+            float heightValue = pow(blended * 0.5f + 0.5f, terrainSettings.heightCurve);
+
+            int baseHeight = static_cast<int>(CHUNK_HEIGHT * terrainSettings.baseHeightFraction);
+            int heightRange = static_cast<int>(CHUNK_HEIGHT * terrainSettings.heightRangeFraction);
             int columnHeight = std::clamp(baseHeight + static_cast<int>(std::round(heightValue * heightRange)), 2, CHUNK_HEIGHT - 2);
 
             for (int y = 0; y < columnHeight; ++y) {

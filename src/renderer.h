@@ -11,6 +11,25 @@ struct ChunkMesh {
     int vertexCount = 0;
 };
 
+struct TerrainSettings {
+    // Noise frequency for the large-scale landmasses (lower -> wider features)
+    float continentFreq = 0.0018f;
+    // Noise frequency for finer surface detail (higher -> more local variation)
+    float detailFreq = 0.0060f;
+    // Blend weights between the low-frequency and high-frequency noise
+    float continentWeight = 0.85f;
+    float detailWeight = 0.15f;
+    // Smoothing kernel weights (center, edges, diagonals) to reduce jagged steps
+    float smoothingCenterWeight = 4.0f;
+    float smoothingEdgeWeight = 2.0f;
+    float smoothingDiagWeight = 1.0f;
+    // Exponent applied to the normalized height to shape slopes/plateaus (<1 flattens)
+    float heightCurve = 0.98f;
+    // Fractions of CHUNK_HEIGHT used for base and variable height range
+    float baseHeightFraction = 0.34f;
+    float heightRangeFraction = 0.32f;
+};
+
 class Renderer {
 public:
     void initialise();
@@ -21,6 +40,8 @@ public:
     void updateVisitedChunks(const std::pair<int, int>& chunk);
     std::pair<int, int> getCurrentChunk(float cameraX, float cameraZ);
     unsigned int loadShaders(const char* vertexPath, const char* fragmentPath);
+    static void setTerrainSettings(const TerrainSettings& settings);
+    static TerrainSettings getTerrainSettings();
 
 private:
     void generateChunk(const std::pair<int, int>& chunk);
@@ -37,4 +58,5 @@ private:
     std::set<std::pair<int, int>> visitedChunks;
     std::map<std::pair<int, int>, std::vector<uint8_t>> chunkData;
     std::map<std::pair<int, int>, ChunkMesh> chunkMeshes;
+    static TerrainSettings terrainSettings;
 };
