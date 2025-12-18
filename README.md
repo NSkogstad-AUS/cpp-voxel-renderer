@@ -11,4 +11,5 @@ run/app
 There's also a imbedded gui within the application, utilising the 'imgui' library, with multiple different setting sliders for real-time modifications to the terrain. (Implemented just so it's easier for me to see how the terrain reacts to different settings)
 
 ## Current view of the Application
-![Renderer window](/README_files/window_image.png)
+![Renderer window](/README_files/window_image1.png)
+![Renderer window](/README_files/window_image2.png)
